@@ -28,6 +28,8 @@ func httpFactory(conf map[string]string) (Client, error) {
 	}
 
 	client := &http.Client{}
+
+	var auth *HTTPAuthentication
 	auth, ok := conf["http_auth"]
 	if ok {
 		var username, password string
@@ -39,7 +41,10 @@ func httpFactory(conf map[string]string) (Client, error) {
 			username = auth
 		}
 
-		client.SetBasicAuth(username, password)
+		auth = &HTTPAuthentication{
+			Username: username,
+			Password: password,
+		}
 	}
 	if skipRaw, ok := conf["skip_cert_verification"]; ok {
 		skip, err := strconv.ParseBool(skipRaw)
@@ -59,19 +64,37 @@ func httpFactory(conf map[string]string) (Client, error) {
 	}
 
 	return &HTTPClient{
-		URL:    url,
-		Client: client,
+		URL:            url,
+		Client:         client,
+		Authentication: auth,
 	}, nil
+}
+
+// HTTPAuthentication
+type HTTPAuthentication struct {
+	Username string
+	Password string
 }
 
 // HTTPClient is a remote client that stores data in Consul or HTTP REST.
 type HTTPClient struct {
-	URL    *url.URL
-	Client *http.Client
+	URL            *url.URL
+	Client         *http.Client
+	Authentication *HTTPAuthentication
 }
 
 func (c *HTTPClient) Get() (*Payload, error) {
-	resp, err := c.Client.Get(c.URL.String())
+	req, err := http.NewRequest("GET", c.URL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if c.Authentication != nil {
+		req.SetBasicAuth(c.Authentication.Username, c.Authentication.Password)
+	}
+
+	// resp, err := c.Client.Get(c.URL.String())
+	resp, err := c.Client.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -151,6 +174,10 @@ func (c *HTTPClient) Put(data []byte) error {
 		return fmt.Errorf("Failed to make HTTP request: %s", err)
 	}
 
+	if c.Authentication != nil {
+		req.SetBasicAuth(c.Authentication.Username, c.Authentication.Password)
+	}
+
 	// Prepare the request
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Content-MD5", b64)
@@ -176,6 +203,10 @@ func (c *HTTPClient) Delete() error {
 	req, err := http.NewRequest("DELETE", c.URL.String(), nil)
 	if err != nil {
 		return fmt.Errorf("Failed to make HTTP request: %s", err)
+	}
+
+	if c.Authentication != nil {
+		req.SetBasicAuth(c.Authentication.Username, c.Authentication.Password)
 	}
 
 	// Make the request
